@@ -1,5 +1,14 @@
 # Stdbuf
 
+![CI][ci-url]
+[![codecov][codecov-image]][codecov-url]
+
+[ci-url]: https://github.com/dikuchan/stdbuf/actions/workflows/ci.yaml
+[ci-image]: https://github.com/dikuchan/stdbuf/actions/workflows/ci.yaml/badge.svg
+
+[codecov-url]: https://codecov.io/gh/dikuchan/stdbuf
+[codecov-image]: https://codecov.io/gh/dikuchan/stdbuf/branch/master/graph/badge.svg?token=EWNC1RJZOK
+
 Size and time aware deduplicated asynchronous buffer.
 
 Inspired by [ClickHouse buffer engine](https://clickhouse.com/docs/en/engines/table-engines/special/buffer/). Used for
