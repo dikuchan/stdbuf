@@ -43,7 +43,7 @@ warn_unreachable = true
 
 [tool.poe.tasks]
 quality.sequence = [
-    { cmd = "black --check -v stdbuf tests" },
+    # { cmd = "black --check -v stdbuf tests" },
     { cmd = "isort -c stdbuf tests" },
     { cmd = "flake8 stdbuf tests" },
     { cmd = "mypy --pretty stdbuf" },
