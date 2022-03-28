@@ -1,6 +1,6 @@
 # Stdbuf
 
-![CI][ci-url]
+[![CI][ci-image]][ci-url]
 [![codecov][codecov-image]][codecov-url]
 
 [ci-url]: https://github.com/dikuchan/stdbuf/actions/workflows/ci.yaml
