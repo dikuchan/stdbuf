@@ -1,0 +1,55 @@
+[tool.poetry]
+name = "stdbuf"
+version = "0.1.0"
+description = "Size and time aware deduplicated asynchronous buffer."
+authors = ["dikuchan <dikuchan@protonmail.com>"]
+readme = "README.md"
+license = "MIT"
+repository = "https://github.com/dikuchan/stdbuf.git"
+packages = [
+    { include = "stdbuf" }
+]
+
+[tool.poetry.dependencies]
+python = "^3.7"
+
+[tool.poetry.dev-dependencies]
+black = "^22.1.0"
+flake8 = "^4.0.1"
+isort = "^5.10.1"
+mypy = "^0.942"
+poethepoet = "^0.13.1"
+pytest = "^7.1.1"
+pytest-asyncio = "^0.18.3"
+pytest-cov = "^3.0.0"
+
+[tool.black]
+line-length = 89
+target-version = ["py37"]
+
+[tool.coverage.report]
+fail_under = 75
+
+[tool.isort]
+profile = "black"
+line_length = 49
+multi_line_output = 3
+
+[tool.mypy]
+python_version = "3.7"
+disallow_any_explicit = true
+disallow_untyped_defs = true
+warn_unreachable = true
+
+[tool.poe.tasks]
+quality.sequence = [
+    { cmd = "black --check -v stdbuf tests" },
+    { cmd = "isort -c stdbuf tests" },
+    { cmd = "flake8 stdbuf tests" },
+    { cmd = "mypy --pretty stdbuf" },
+]
+tests = { cmd = "pytest -vv --asyncio-mode=strict --cov=stdbuf --cov-report term --cov-report xml" }
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
