@@ -154,4 +154,4 @@ class Stdbuf(Generic[T]):
 
     @property
     def maxtime(self) -> float:
-        return self._maxsize
+        return self._maxtime
