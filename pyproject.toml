@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "stdbuf"
-version = "1.0.0"
+version = "1.0.1"
 description = "Size and time aware deduplicated asynchronous buffer."
 authors = ["dikuchan <dikuchan@protonmail.com>"]
 readme = "README.md"
