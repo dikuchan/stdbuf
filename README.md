@@ -9,10 +9,17 @@
 [codecov-url]: https://codecov.io/gh/dikuchan/stdbuf
 [codecov-image]: https://codecov.io/gh/dikuchan/stdbuf/branch/master/graph/badge.svg?token=EWNC1RJZOK
 
-Size and time aware deduplicated asynchronous buffer.
+Size and time bounded asynchronous buffer with deduplication. 
+
+Buffer's content is flushed when either maximum size or time since
+the first insertion reaches the specified limits.
 
 Inspired by [ClickHouse buffer engine](https://clickhouse.com/docs/en/engines/table-engines/special/buffer/). Used for
 the same purpose.
+
+### Note
+
+Multiple concurrent consumers are not supported.
 
 ### Usage
 
@@ -23,28 +30,29 @@ import time
 from stdbuf import Stdbuf
 
 
-async def read(buf: Stdbuf):
-    for i in range(16):
+async def produce(buf: Stdbuf[int]):
+    for i in range(2 ** 16):
         await buf.put(i)
-        await asyncio.sleep(0.5)
+        # Duplicates are ignored.
+        await buf.put(i)
 
 
-async def write(buf: Stdbuf):
+async def consume(buf: Stdbuf[int]):
     while True:
         start = time.perf_counter()
-        # Returns at least every 2 seconds.
+        # Get data at least every 2 seconds.
         # May return earlier if full.
         data = await buf.get()
         elapsed = time.perf_counter() - start
-        assert len(data) <= 4
-        assert elapsed <= 2 + 1e-2
+        assert len(data) <= 16
+        assert elapsed <= 0.5 + 1e-2
 
 
 async def main():
-    with Stdbuf(4, 2, True) as buf:
+    with Stdbuf(16, 0.5, True) as buf:
         done, pending = await asyncio.wait({
-            asyncio.create_task(read(buf)),
-            asyncio.create_task(write(buf)),
+            asyncio.create_task(produce(buf)),
+            asyncio.create_task(consume(buf)),
         },
             return_when=asyncio.FIRST_COMPLETED,
         )
