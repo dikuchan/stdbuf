@@ -8,6 +8,7 @@ from typing import (
     Set,
     Type,
     TypeVar,
+    Union,
 )
 
 T = TypeVar("T", bound=Hashable)
@@ -44,11 +45,11 @@ class Stdbuf(Generic[T]):
         if dedup:
             # O(1) for ``in`` operation, O(n) when converting to list.
             self._add = lambda s, i: s.add(i)
-            self._buffer: Set[T] = set()
+            self._buffer: Union[Set[T], List[T]] = set()  # type: ignore
         else:
             # All for O(1) (in the best case).
             self._add = lambda s, i: s.append(i)
-            self._buffer: List[T] = []
+            self._buffer: Union[Set[T], List[T]] = []  # type: ignore
 
         self._maxsize = maxsize
         self._maxtime = maxtime
