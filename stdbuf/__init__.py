@@ -5,6 +5,7 @@ from typing import (
     Hashable,
     List,
     Optional,
+    Set,
     Type,
     TypeVar,
 )
@@ -20,43 +21,68 @@ class Stdbuf(Generic[T]):
         dedup: bool = False,
     ) -> None:
         """
-        Size- and time-aware deduplicated asynchronous buffer.
+        Size and time bounded asynchronous buffer with deduplication.
 
-        Either when size of the buffer exceeds `maxsize` or once in `maxtime` seconds
-        buffer becomes unlocked and its data is returned in `get`.
-        Until that, awaiting `get` is blocking.
-        Use `get_nowait` to skip waiting.
+        Put items in buffer asynchronously with ``put``.
 
-        Note that even if the buffer remains empty, empty list will be flushed each
-        `maxtime` seconds.
+        Either when size of the buffer exceeds ``maxsize`` or time since the first
+        put operation after successful ``get`` exceeds ``maxtime``, buffer is unlocked
+        and its content is returned in ``get``.
+        Until then, awaiting ``get`` blocks.
 
-        :param maxsize: Maximum number of items to keep in buffer before flush.
-        :param maxtime: Period in seconds between force flushes.
+        It is advised to use separate ``asyncio`` tasks to put items and to get them.
+
+        :param maxsize: Maximum number of items to keep in buffer.
+        :param maxtime: Maximum time between first put and return.
         :param dedup: Whether to deduplicate items in buffer.
         """
-        if maxsize < 0:
+        if maxsize <= 0:
             raise ValueError("Parameter `maxsize` must be greater than 0")
-        if maxtime < 0:
+        if maxtime <= 0:
             raise ValueError("Parameter `maxtime` must be greater than 0")
 
-        self._buffer: List[T] = []
+        if dedup:
+            # O(1) for ``in`` operation, O(n) when converting to list.
+            self._add = lambda s, i: s.add(i)
+            self._buffer: Set[T] = set()
+        else:
+            # All for O(1) (in the best case).
+            self._add = lambda s, i: s.append(i)
+            self._buffer: List[T] = []
 
         self._maxsize = maxsize
         self._maxtime = maxtime
         self._dedup = dedup
-        # Use lock to safely manipulate buffer in `get`.
+
+        # Use thread lock to safely manipulate buffer.
         self._lock = asyncio.Lock()
-        # Signal to the `get` method that one of the conditions is met, and it is time
-        # to return the buffer's content.
+
+        # Signal to the ``get`` method that ``maxsize`` is reached.
         self._size_event = asyncio.Event()
+        # Signal to the ``get`` method that ``maxtime`` is reached.
         self._time_event = asyncio.Event()
+        # Signal to timer that the first element is in the buffer.
+        self._wait_event = asyncio.Event()
+        # Signal to ``put`` and timer that buffer is unlocked.
+        # Start over again.
+        self._flush_event = asyncio.Event()
 
-        async def wait() -> None:
+        # Whether to block ``put``.
+        self._block = False
+
+        # Launch the background task with timer.
+        async def timer() -> None:
             while True:
-                await asyncio.sleep(self._maxtime)
-                self._time_event.set()
+                await self._wait_event.wait()
+                try:
+                    await asyncio.wait_for(
+                        self._flush_event.wait(),
+                        timeout=self._maxtime,
+                    )
+                except asyncio.TimeoutError:
+                    self._time_event.set()
 
-        self._task = asyncio.create_task(wait())
+        self._timer_task = asyncio.create_task(timer())
 
     def __enter__(self) -> "Stdbuf[T]":
         return self
@@ -69,50 +95,40 @@ class Stdbuf(Generic[T]):
     ) -> None:
         self.close()
 
-    def close(self) -> None:
-        """
-        Cancel inner timer task.
-
-        If not stopped, asyncio task will be destroyed by the interpreter.
-        """
-        self._task.cancel()
-
     async def put(self, item: T) -> bool:
         """
-        Put item in the buffer.
+        Put an item in the buffer.
 
-        :return: Whether item was inserted.
-            Return `False` if the buffer is full or if deduplication is on and
-            duplicate is in the buffer already.
+        :return: Whether the item was inserted.
+            Return ``False`` if ``dedup`` is on and the item is duplicate.
         """
-        if self._dedup and item in self._buffer:
-            return False
-        buffer_size = len(self._buffer)
-        if buffer_size >= self._maxsize:
-            return False
+        if self._block:
+            await self._flush_event.wait()
+
         async with self._lock:
-            self._buffer.append(item)
-        if buffer_size + 1 >= self._maxsize:
-            self._size_event.set()
+            if self._dedup and item in self._buffer:
+                return False
+
+            self._add(self._buffer, item)
+
+            buffer_size = len(self._buffer)
+            if buffer_size == 1:
+                self._wait_event.set()
+            if buffer_size >= self._maxsize:
+                self._size_event.set()
+                self._block = True
 
         return True
-
-    async def _get(self) -> List[T]:
-        self._size_event.clear()
-        self._time_event.clear()
-        async with self._lock:
-            buffer = self._buffer.copy()
-            self._buffer.clear()
-
-        return buffer
 
     async def get(self) -> List[T]:
         """
         Get content of the buffer.
 
-        Block if buffer is not yet ready.
-        Return either if `maxsize` is reached or `maxtime` has passed.
+        Blocks if buffer is not yet ready.
+        Return either if ``maxsize`` or ``maxtime`` is reached.
         """
+        self._flush_event.clear()
+
         _, pending = await asyncio.wait(
             {
                 asyncio.create_task(self._size_event.wait()),
@@ -120,26 +136,29 @@ class Stdbuf(Generic[T]):
             },
             return_when=asyncio.FIRST_COMPLETED,
         )
-        # Exactly one task is pending, other is done.
-        pending.pop().cancel()
-        buffer = await self._get()
+        # Either one, or zero tasks are done.
+        if pending:
+            pending.pop().cancel()
 
-        return buffer
+        async with self._lock:
+            self._wait_event.clear()
+            self._size_event.clear()
+            self._time_event.clear()
 
-    async def get_nowait(self) -> Optional[List[T]]:
-        """
-        Get content of the buffer without blocking.
+            # Signal to stop the timer and unblock ``put``.
+            self._flush_event.set()
 
-        Return buffer's content immediately if ready.
-        If not, return `None`.
-        """
-        if self._size_event.is_set() or self._time_event.is_set():
-            buffer = await self._get()
-            return buffer
+            self._block = False
 
-        return None
+            buffer = self._buffer.copy()
+            self._buffer.clear()
+
+        return list(buffer)
 
     def empty(self) -> bool:
+        """
+        Whether the buffer is empty.
+        """
         return not self._buffer
 
     def size(self) -> int:
@@ -147,6 +166,12 @@ class Stdbuf(Generic[T]):
         Current size of the buffer.
         """
         return len(self._buffer)
+
+    def close(self) -> None:
+        """
+        Cancel inner timer ``asyncio`` task.
+        """
+        self._timer_task.cancel()
 
     @property
     def maxsize(self) -> int:
