@@ -121,7 +121,8 @@ class Stdbuf(Generic[T]):
             return_when=asyncio.FIRST_COMPLETED,
         )
         # Exactly one task is pending, other is done.
-        pending.pop().cancel()
+        if pending:
+            pending.pop().cancel()
         buffer = await self._get()
 
         return buffer
